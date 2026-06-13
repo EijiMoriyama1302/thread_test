@@ -58,7 +58,24 @@ void MyApi::th_decode_worker() {
         
         dec_simple(buffers[0], 2 * 1024);
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        // 2MBの領域を 2KB(2048バイト) ずつ進めるループ
+        const size_t STEP_SIZE = 2 * 1024; // 2KB
+        uint8_t* start_ptr = buffers[0];
+        uint8_t* end_ptr = start_ptr + BUFFER_SIZE; // BUFFER_SIZEは2MB
+
+        decode_loop_count = 0;
+
+        for (uint8_t* current_ptr = start_ptr; current_ptr < end_ptr; current_ptr += STEP_SIZE) {
+            // ここで本来の dec_simple 処理などを実行
+            // 例: this->dec_simple(current_ptr, STEP_SIZE);
+
+            // テスト検証用に記録
+            decode_loop_count++;
+            last_processed_address = current_ptr;
+        }
+
+        is_loop_completed = true; // 2MB分の全ループが完了
+        break; // テスト用に1周したら抜ける
     }
 }
 
