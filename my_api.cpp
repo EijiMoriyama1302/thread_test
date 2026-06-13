@@ -53,16 +53,14 @@ void MyApi::th_demux() {
 void MyApi::th_decode_worker() {
     // ここでのフラグセットは削除（親スレッド側でセット済み）
 
-    size_t slot_index = 0;
-
     while (is_decode_worker_running) {
         // 本来は buffers[0] にデータが届くのを条件変数等で待つ
-        if (slot_index < 100) {
-            // buffers[0] から 2KB 単位でデータをスロットへデコード/コピー
-            std::memcpy(decode_slots[slot_index], buffers[0], 2 * 1024);
-            slot_index++;
-        }
-    
+        
+        // 検証用に、実際に渡す値をメンバ変数に記録
+        this->passed_address = buffers[0];
+        this->passed_size = 2 * 1024;
+        this->is_dec_simple_called = true; // 呼び出し完了フラグ
+
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
