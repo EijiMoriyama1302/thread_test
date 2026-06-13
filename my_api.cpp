@@ -7,8 +7,23 @@ void MyApi::mp_api_init() {
 
 void MyApi::th_demux() {
     is_running = true;
+
+    // th_decode_worker スレッドを起動
+    decode_thread = std::thread(&MyApi::th_decode_worker, this);
+
     // スレッドのメインループ処理...
     while (is_running) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        // 本来のデマルチプレクス処理
+        break; // テスト用にすぐ抜ける構成にしています
+    }
+}
+
+void MyApi::th_decode_worker() {
+    is_decode_worker_running = true;
+
+    // スレッドのメインループ処理...
+    while (is_decode_worker_running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         // 本来のデマルチプレクス処理
         break; // テスト用にすぐ抜ける構成にしています
