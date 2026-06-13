@@ -3,6 +3,8 @@
 #include <mutex>
 #include <condition_variable>
 #include <thread>
+#include <cstring>
+#include <fstream>
 #include "my_api.h"
 
 // テスト用の派生クラス（内部状態やスレッド起動を同期するためのフックを作る場合）
@@ -116,4 +118,53 @@ TEST_F(MyApiMemoryTest, InitBuffersCorrectly) {
             << "Expected: " << static_cast<void*>(expected_address) << ", "
             << "Actual: " << static_cast<void*>(api.buffers[i]);
     }
+}
+
+class MyApiFileWriteTest : public ::testing::Test {
+protected:
+    const std::string test_filename = "test.mpg";
+    const size_t FILE_SIZE = 2 * 1024 * 1024; // 2MB
+    std::vector<uint8_t> dummy_data;
+
+    // テストケース実行前に、2MBのダミーファイルを作成する
+    void SetUp() override {
+        // 判別しやすいように 0xAA で埋めた2MBのデータを用意
+        dummy_data.resize(FILE_SIZE, 0xAA);
+
+        std::ofstream ofs(test_filename, std::ios::binary);
+        ASSERT_TRUE(ofs.is_open()) << "Failed to create temporary test file.";
+        ofs.write(reinterpret_cast<const char*>(dummy_data.data()), FILE_SIZE);
+        ofs.close();
+    }
+
+    // テスト終了後に、ゴミが残らないようファイルを削除する
+    void TearDown() override {
+        std::remove(test_filename.c_str());
+    }
+};
+
+TEST_F(MyApiFileWriteTest, ThDemuxWritesFileDataToBuffer0) {
+    MyApi api;
+
+    // 1. 初期化とスレッド起動（内部で test.mpg の読み込みが走る）
+    api.mp_api_init();
+
+    // 2. 非同期でファイル読み込み・バッファ書き込みが行われるのを少し待つ
+    //（実務では書き込み完了フラグ等を用意するのがベストですが、ここではタイムアウト付きで少し猶予を上げます）
+    const int max_attempts = 50;
+    for (int i = 0; i < max_attempts; ++i) {
+        // buffers[0] の先頭が初期値(nullptrや0)から、ファイルデータの 0xAA に変わったか簡易チェック
+        if (api.buffers[0] != nullptr && api.buffers[0][0] == 0xAA) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // 3. 検証：buffers[0] が nullptr でないこと
+    ASSERT_NE(api.buffers[0], nullptr);
+
+    // 4. 検証：buffers[0] に書き込まれた2MBのデータが、元ファイル（dummy_data）と完全一致するか
+    int result = std::memcmp(api.buffers[0], dummy_data.data(), FILE_SIZE);
+    
+    EXPECT_EQ(result, 0) << "Data in buffers[0] does not match the source file 'test.mpg'.";
 }
