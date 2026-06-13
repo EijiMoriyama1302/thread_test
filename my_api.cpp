@@ -9,31 +9,42 @@ void MyApi::mp_api_init() {
         buffers[i] = &shared_memory_pool[i * BUFFER_SIZE];
     }
 
+    // ★重要: スレッドを起動する「前」に、メインスレッド側でフラグを true にする
+    is_running = true;
+
     // th_demux スレッドを起動
     demux_thread = std::thread(&MyApi::th_demux, this);
 }
 
 void MyApi::th_demux() {
-    is_running = true;
+    // ★【重要】もしスレッドが動き出した瞬間に、メイン側でデストラクタが始まっていたら（is_runningがfalseになっていたら）
+    // 孫スレッドの起動処理をスキップして即終了するガードを入れる
+    if (!is_running) {
+        return;
+    }
 
-    // th_decode_worker スレッドを起動
+    // ★重要: decode_workerを起動する「前」に、フラグを true にする
+    is_decode_worker_running = true;
     decode_thread = std::thread(&MyApi::th_decode_worker, this);
 
     // スレッドのメインループ処理...
     while (is_running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
         // 本来のデマルチプレクス処理
-        break; // テスト用にすぐ抜ける構成にしています
+        
+        // 注意: テストで break させる場合でも、
+        // デストラクタが呼ばれるまではループを維持するか、
+        // あるいは適切にフラグが連動するようにします。
+        // ここでは即 break せず、フラグを見て回るようにしておくのがマルチスレッドテストの鉄則です。
     }
 }
 
 void MyApi::th_decode_worker() {
-    is_decode_worker_running = true;
+    // ここでのフラグセットは削除（親スレッド側でセット済み）
 
     // スレッドのメインループ処理...
     while (is_decode_worker_running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        // 本来のデマルチプレクス処理
-        break; // テスト用にすぐ抜ける構成にしています
+        // 本来のデコード処理
     }
 }

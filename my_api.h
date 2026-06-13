@@ -8,6 +8,7 @@
 #include <condition_variable>
 
 class MyApi {
+
 public:
     MyApi() 
     : is_running(false)
@@ -15,11 +16,15 @@ public:
     {}
 
     ~MyApi() {
-        if (decode_thread.joinable()) {
-            decode_thread.join();
-        }
+        // 1. スレッドのループフラグを折る
+        is_running = false;
+        is_decode_worker_running = false;
+
         if (demux_thread.joinable()) {
             demux_thread.join();
+        }
+        if (decode_thread.joinable()) {
+            decode_thread.join();
         }
     }
 
