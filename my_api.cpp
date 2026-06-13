@@ -66,6 +66,12 @@ void MyApi::th_decode_worker() {
             this->dec_simple(current_ptr, STEP_SIZE);
         }
 
+        // 2. ★ループ完了後にバッファ（2MB）を0クリアする
+        std::memset(buffers[0], 0, BUFFER_SIZE);
+
+        // 3. テスト側に完了を伝える
+        is_clear_completed = true;
+
         is_loop_completed = true; // 2MB分の全ループが完了
         break; // テスト用に1周したら抜ける
     }
