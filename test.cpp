@@ -366,3 +366,74 @@ TEST_F(MyApiAllBuffersWriteTest, ThDemuxWritesFileDataToAllBuffersSequentially) 
         EXPECT_EQ(result, 0) << "Data mismatch detected in buffers[" << b << "]!";
     }
 }
+
+class MyApiRingBufferWriteTest : public ::testing::Test {
+protected:
+    const std::string test_filename = "test.mpg";
+    const size_t BLOCK_SIZE = 2 * 1024 * 1024; // 2MB
+    // 8個分(16MB) + 続きの1個分(2MB) = 計18MB
+    const size_t TOTAL_SIZE = BLOCK_SIZE * (MyApi::BUFFER_COUNT + 1); 
+    std::vector<uint8_t> dummy_file_data;
+
+    void SetUp() override {
+        dummy_file_data.resize(TOTAL_SIZE);
+        // 検証しやすいように、ブロックごとに異なる値で埋める
+        // ブロック0 (0~2MB): 0x01, ブロック1 (2~4MB): 0x02, ..., ブロック8 (16~18MB): 0x09
+        for (size_t b = 0; b < MyApi::BUFFER_COUNT + 1; ++b) {
+            std::memset(dummy_file_data.data() + (b * BLOCK_SIZE), static_cast<int>(b + 1), BLOCK_SIZE);
+        }
+
+        std::ofstream ofs(test_filename, std::ios::binary);
+        ASSERT_TRUE(ofs.is_open());
+        ofs.write(reinterpret_cast<const char*>(dummy_file_data.data()), TOTAL_SIZE);
+        ofs.close();
+    }
+
+    void TearDown() override {
+        std::remove(test_filename.c_str());
+    }
+};
+
+TEST_F(MyApiRingBufferWriteTest, ThDemuxOverwritesBuffer0WithNextDataAfterClear) {
+    MyApi api;
+
+    // 1. スレッド起動＆初期化（まずはファイルから16MB分が全バッファに順次書き込まれる）
+    api.mp_api_init();
+
+    // 2. 1周目の書き込みが完了するのを待つ（buffers[7] の先頭が 0x08 になるのを監視）
+    const int max_attempts = 100;
+    bool first_round_completed = false;
+    for (int i = 0; i < max_attempts; ++i) {
+        if (api.buffers[MyApi::BUFFER_COUNT - 1] != nullptr && 
+            api.buffers[MyApi::BUFFER_COUNT - 1][0] == 0x08) {
+            first_round_completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(first_round_completed) << "First round of writing to buffers[0~7] timed out.";
+
+    // 3. 【チェック】この時点で、buffers[0] には「1周目のデータ (0x01)」が入っていることを確認
+    EXPECT_EQ(api.buffers[0][0], 0x01);
+
+    // 4. 【擬似シミュレート】テスト側から buffers[0] を「0クリア」して、デコーダーが消費したことにする
+    std::memset(api.buffers[0], 0, BLOCK_SIZE);
+
+    // 5. th_demux が「buffers[0] が空いた！」と検知して、続きのデータ（0x09）を書き込むのを待つ
+    bool overwrite_completed = false;
+    for (int i = 0; i < max_attempts; ++i) {
+        // buffers[0] の先頭が、続きのデータの識別値（0x09）に変わったか監視
+        if (api.buffers[0][0] == 0x09) {
+            overwrite_completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(overwrite_completed) << "th_demux did not overwrite buffers[0] with the next data.";
+
+    // 6. 【最終検証】buffers[0] の2MB全域が、ファイルの後続データ（ブロック8）と完全一致するか検証
+    const uint8_t* expected_next_data = dummy_file_data.data() + (MyApi::BUFFER_COUNT * BLOCK_SIZE);
+    int result = std::memcmp(api.buffers[0], expected_next_data, BLOCK_SIZE);
+
+    EXPECT_EQ(result, 0) << "The overwritten data in buffers[0] is corrupted or incorrect.";
+}
