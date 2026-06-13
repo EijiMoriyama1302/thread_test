@@ -65,3 +65,55 @@ TEST(MyApiSubThreadTest, ThDemuxStartsThDecodeWorker) {
     // ここが今回の本命のテスト
     ASSERT_TRUE(decode_worker_started) << "th_decode_worker thread failed to start from th_demux.";
 }
+
+// =========================================================================
+// テスト3: バッファ確保とアドレス格納の検証用フィクスチャとテスト
+// =========================================================================
+class MyApiMemoryTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        // 必要に応じて各テストケース実行前の共通処理を記述（今回は空でOK）
+    }
+};
+
+// バッファ確保とアドレス格納の検証テスト
+TEST_F(MyApiMemoryTest, InitBuffersCorrectly) {
+    MyApi api;
+
+    // 1. 実行前にポインタが初期化(nullptr)されていることを一応確認
+    // (コンストラクタの挙動テスト)
+    for (size_t i = 0; i < 8; ++i) {
+        EXPECT_EQ(api.buffers[i], nullptr);
+    }
+
+    // 2. 初期化メソッドを実行（ここでメモリ確保とアドレス割り当てが行われる）
+    api.mp_api_init();
+
+    // 定数の定義（検証用）
+    const size_t EXPECTED_BUFFER_SIZE = 2 * 1024 * 1024; // 2MB
+    const size_t EXPECTED_BUFFER_COUNT = 8;
+
+    // 3. shared_memory_pool のサイズが 16MB になっているか確認
+    EXPECT_EQ(api.shared_memory_pool.size(), EXPECTED_BUFFER_SIZE * EXPECTED_BUFFER_COUNT);
+
+    // 先頭アドレスを取得
+    uint8_t* pool_start = api.shared_memory_pool.data();
+    uint8_t* pool_end = pool_start + api.shared_memory_pool.size();
+
+    // 4. 各バッファのポインタが正しく計算され、格納されているかをループで検証
+    for (size_t i = 0; i < EXPECTED_BUFFER_COUNT; ++i) {
+        // ポインタが nullptr でないこと
+        ASSERT_NE(api.buffers[i], nullptr) << "Buffer [" << i << "] is nullptr!";
+
+        // ポインタが確保したメモリプールの範囲内にあること
+        EXPECT_GE(api.buffers[i], pool_start);
+        EXPECT_LT(api.buffers[i], pool_end);
+
+        // アドレスが「先頭 + (2MB × i)」の正確な位置を指しているか
+        uint8_t* expected_address = pool_start + (i * EXPECTED_BUFFER_SIZE);
+        EXPECT_EQ(api.buffers[i], expected_address) 
+            << "Buffer [" << i << "] address is incorrect. "
+            << "Expected: " << static_cast<void*>(expected_address) << ", "
+            << "Actual: " << static_cast<void*>(api.buffers[i]);
+    }
+}
