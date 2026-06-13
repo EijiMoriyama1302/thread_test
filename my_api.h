@@ -49,6 +49,11 @@ public:
     size_t passed_size = 0;
     std::atomic<bool> is_dec_simple_called{false};
 
+    // テスト検証用のメンバ変数
+    std::atomic<size_t> decode_loop_count{0}; // 2KBずつの処理が何回走ったか
+    uint8_t* last_processed_address = nullptr; // 最後に処理したアドレス
+    std::atomic<bool> is_loop_completed{false}; // 2MB分の全ループが完了したフラグ
+
 private:
     void th_demux() ;
     void th_decode_worker() ;

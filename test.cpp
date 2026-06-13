@@ -209,3 +209,48 @@ TEST_F(MyApiDecodeArgsTest, ThDecodeWorkerPassesCorrectArgsToDecSimple) {
     EXPECT_EQ(api.passed_size, 2 * 1024) 
         << "The size passed to dec_simple is not 2048 bytes.";
 }
+
+class MyApiDecodeLoopTest : public ::testing::Test {
+protected:
+    void SetUp() override {}
+    void TearDown() override {}
+};
+
+TEST_F(MyApiDecodeLoopTest, ThDecodeWorkerAdvancesPointerEvery2KBUpTo2MB) {
+    MyApi api;
+
+    // 1. メモリプールとスレッドの初期化
+    api.mp_api_init();
+
+    // buffers[0] が正しく割り当てられていることを確認
+    ASSERT_NE(api.buffers[0], nullptr);
+
+    // 2. 非同期で th_decode_worker が2MB分のループを完了するのを待つ
+    const int max_attempts = 100;
+    bool is_completed = false;
+
+    for (int i = 0; i < max_attempts; ++i) {
+        if (api.is_loop_completed) {
+            is_completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // 3. 検証：タイムアウトせずにループが最後まで走り切ったか
+    ASSERT_TRUE(is_completed) << "th_decode_worker loop did not complete within the timeout period.";
+
+    // 4. 検証：2KBずつの反復回数が【正確に1024回】であるか
+    // 計算式: 2MB (2,097,152バイト) / 2KB (2,048バイト) = 1024回
+    const size_t EXPECTED_LOOPS = (2 * 1024 * 1024) / (2 * 1024); 
+    EXPECT_EQ(api.decode_loop_count, EXPECTED_LOOPS) 
+        << "The loop did not execute exactly " << EXPECTED_LOOPS << " times.";
+
+    // 5. 検証：最後に処理されたポインタのアドレスが正確か
+    // ループの最後(1024回目)は、2MBの末尾からちょうど2KB手前のアドレスを指している必要があります。
+    uint8_t* expected_last_addr = api.buffers[0] + (2 * 1024 * 1024) - (2 * 1024);
+    EXPECT_EQ(api.last_processed_address, expected_last_addr)
+        << "The last processed address is incorrect. "
+        << "Expected: " << static_cast<void*>(expected_last_addr) << ", "
+        << "Actual: " << static_cast<void*>(api.last_processed_address);
+}
