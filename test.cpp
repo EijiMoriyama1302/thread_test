@@ -254,3 +254,47 @@ TEST_F(MyApiDecodeLoopTest, ThDecodeWorkerAdvancesPointerEvery2KBUpTo2MB) {
         << "Expected: " << static_cast<void*>(expected_last_addr) << ", "
         << "Actual: " << static_cast<void*>(api.last_processed_address);
 }
+
+class MyApiBufferClearTest : public ::testing::Test {
+protected:
+    void SetUp() override {}
+    void TearDown() override {}
+};
+
+TEST_F(MyApiBufferClearTest, ThDecodeWorkerClearsBuffer0AfterProcessing) {
+    MyApi api;
+
+    // 1. メモリプールとスレッドの初期化
+    api.mp_api_init();
+
+    // buffers[0] が正しく割り当てられていることを確認
+    ASSERT_NE(api.buffers[0], nullptr);
+
+    // 2. 変化を確実に検知するため、事前に buffers[0] (2MB) を 0x55 で埋めておく
+    // (これをしないと、元から0だったのかクリアされて0になったのか区別がつきません)
+    std::memset(api.buffers[0], 0x55, MyApi::BUFFER_SIZE);
+
+    // 3. 非同期で th_decode_worker がループ処理とゼロクリアを終えるのを待つ
+    const int max_attempts = 100;
+    bool is_completed = false;
+
+    for (int i = 0; i < max_attempts; ++i) {
+        if (api.is_clear_completed) {
+            is_completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // 4. 検証：タイムアウトせずにクリア処理まで到達したか
+    ASSERT_TRUE(is_completed) << "th_decode_worker processing and clear did not complete within timeout.";
+
+    // 5. 検証：buffers[0] の 2MB の領域が「すべて 0」になっているか
+    // 期待値として、すべて0で埋まった2MBの比較用ベクトルを用意
+    std::vector<uint8_t> expected_zero_buffer(MyApi::BUFFER_SIZE, 0);
+
+    // memcmp で実際のバッファと期待値（すべて0）を比較
+    int result = std::memcmp(api.buffers[0], expected_zero_buffer.data(), MyApi::BUFFER_SIZE);
+    
+    EXPECT_EQ(result, 0) << "buffers[0] was not correctly cleared to 0 after processing.";
+}
