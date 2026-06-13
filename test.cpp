@@ -230,7 +230,7 @@ TEST_F(MyApiDecodeLoopTest, ThDecodeWorkerAdvancesPointerEvery2KBUpTo2MB) {
     bool is_completed = false;
 
     for (int i = 0; i < max_attempts; ++i) {
-        if (api.is_loop_completed) {
+        if (api.is_clear_completed) {
             is_completed = true;
             break;
         }

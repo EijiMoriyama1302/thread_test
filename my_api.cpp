@@ -72,7 +72,6 @@ void MyApi::th_decode_worker() {
         // 3. テスト側に完了を伝える
         is_clear_completed = true;
 
-        is_loop_completed = true; // 2MB分の全ループが完了
         break; // テスト用に1周したら抜ける
     }
 }

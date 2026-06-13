@@ -50,7 +50,6 @@ public:
     std::atomic<bool> is_dec_simple_called{false};
     std::atomic<size_t> decode_loop_count{0}; // 2KBずつの処理が何回走ったか
     uint8_t* last_processed_address = nullptr; // 最後に処理したアドレス
-    std::atomic<bool> is_loop_completed{false}; // 2MB分の全ループが完了したフラグ
     std::atomic<bool> is_clear_completed{false}; // ゼロクリアまで全処理が完了したフラグ
 
 private:
