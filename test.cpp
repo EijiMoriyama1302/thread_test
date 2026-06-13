@@ -170,63 +170,42 @@ TEST_F(MyApiFileWriteTest, ThDemuxWritesFileDataToBuffer0) {
     EXPECT_EQ(result, 0) << "Data in buffers[0] does not match the source file 'test.mpg'.";
 }
 
-// テスト用のフィクスチャクラス
-class MyApiDecodeWorkerTest : public ::testing::Test {
+class MyApiDecodeArgsTest : public ::testing::Test {
 protected:
-    const size_t SLOT_SIZE = 2 * 1024;       // 2KB
-    const size_t SLOT_COUNT = 100;           // 100個
-    const size_t TOTAL_DECODE_SIZE = 8 * 1024 * 1024; // 8MB (※2KB×100個を何周か、あるいは大きなプールを指す場合)
-
-    void SetUp() override {
-        // テスト毎の共通初期化処理（必要に応じて）
-    }
-
-    void TearDown() override {
-        // テスト毎の共通クリーンアップ処理
-    }
+    void SetUp() override {}
+    void TearDown() override {}
 };
-TEST_F(MyApiDecodeWorkerTest, ThDecodeWorkerProcessesDataToSlots) {
+
+TEST_F(MyApiDecodeArgsTest, ThDecodeWorkerPassesCorrectArgsToDecSimple) {
     MyApi api;
 
     // 1. メモリプールとスレッドの初期化
     api.mp_api_init();
 
-    // 2. 入力バッファ (buffers[0]) に検証用データを仕込む
-    //    (shared_memory_pool の先頭から 2MB 分が buffers[0] に割り当てられている前提)
+    // buffers[0] が正しく割り当てられていることを確認
     ASSERT_NE(api.buffers[0], nullptr);
-    
-    // 識別しやすいように 0x55 で入力バッファの先頭領域を埋める
-    std::memset(api.buffers[0], 0x55, SLOT_SIZE); 
 
-    // 3. 【前提】プロダクションコード側に、100個のスロット配列（例: api.decode_slots[100][2048]）
-    //    またはそれに準ずるバッファが用意されており、初期状態は 0 埋めされていると仮定します。
-    //    ここでは、テストからアクセス可能な状態として検証します。
-
-    // 4. デコーダースレッドが処理を完了するのをタイムアウト付きループで待つ
-    //    (2KB × 100個 = 200KB 分のデータがスロットに書き込まれるのを待機)
+    // 2. 非同期で th_decode_worker が動き、引数をセットして呼び出すのを少し待つ
     const int max_attempts = 100;
-    bool decode_completed = false;
+    bool is_called = false;
 
     for (int i = 0; i < max_attempts; ++i) {
-        // 例として、最後（100番目）のスロットの先頭バイトが 0x55 に変化したかで判定
-        // ※ プロダクションコードに「処理済みスロット数」を返すカウンタ（api.get_processed_slots()等）が
-        //    あれば、`if (api.get_processed_slots() >= 100)` と書くのがより堅牢で推奨されます。
-        if (api.decode_slots[SLOT_COUNT - 1][0] == 0x55) {
-            decode_completed = true;
+        // プロダクション側で用意した呼び出し完了フラグをチェック
+        if (api.is_dec_simple_called) {
+            is_called = true;
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    // 5. アサーション：タイムアウトまでに処理が完了したか
-    ASSERT_TRUE(decode_completed) << "th_decode_worker failed to process 100 slots within the timeout period.";
+    // 3. 検証：タイムアウトまでに確実に処理が走ったか
+    ASSERT_TRUE(is_called) << "th_decode_worker did not call dec_simple logic within timeout.";
 
-    // 6. データの完全性検証：100個の全スロットの内容が正しく書き込まれているか
-    for (size_t i = 0; i < SLOT_COUNT; ++i) {
-        // 各スロットの先頭バイトが期待通りのデータ (0x55) になっているか
-        EXPECT_EQ(api.decode_slots[i][0], 0x55) << "Slot [" << i << "] data is incorrect!";
-        
-        // 必要に応じて、スロット全体のデータの一致を memcmp 等で検証します
-        // EXPECT_EQ(std::memcmp(api.decode_slots[i], expected_data, SLOT_SIZE), 0);
-    }
+    // 4. 検証：dec_simple に渡された「アドレス」が buffers[0] と完全に一致するか
+    EXPECT_EQ(api.passed_address, api.buffers[0]) 
+        << "The address passed to dec_simple does not match buffers[0].";
+
+    // 5. 検証：dec_simple に渡された「サイズ」が 2KB (2048) であるか
+    EXPECT_EQ(api.passed_size, 2 * 1024) 
+        << "The size passed to dec_simple is not 2048 bytes.";
 }

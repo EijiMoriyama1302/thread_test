@@ -47,6 +47,11 @@ public:
     bool is_demux_running() const { return is_running; }
     bool is_decode_running() {return is_decode_worker_running;}
 
+    // テスト検証用に、dec_simple に渡された引数を記録する変数
+    uint8_t* passed_address = nullptr;
+    size_t passed_size = 0;
+    std::atomic<bool> is_dec_simple_called{false};
+
 private:
     void th_demux() ;
     void th_decode_worker() ;
