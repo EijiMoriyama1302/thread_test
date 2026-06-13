@@ -1,4 +1,5 @@
 #include "my_api.h"
+#include <cstdio>
 
 void MyApi::mp_api_init() {
     // 1. 2MB × 8個 = 16MB のメモリを動的に一括確保
@@ -26,6 +27,15 @@ void MyApi::th_demux() {
     // ★重要: decode_workerを起動する「前」に、フラグを true にする
     is_decode_worker_running = true;
     decode_thread = std::thread(&MyApi::th_decode_worker, this);
+
+    // 【ファイル読み込み・書き込み処理のイメージ】
+    // 実際のコードでは、ここで "test.mpg" を開き、2MB分を buffers[0] に読み込む
+    FILE* fp = fopen("test.mpg", "rb");
+    if (fp) {
+        // buffers[0] に最大 2MB 読み込む
+        fread(buffers[0], 1, BUFFER_SIZE, fp);
+        fclose(fp);
+    }
 
     // スレッドのメインループ処理...
     while (is_running) {
