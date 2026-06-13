@@ -56,11 +56,15 @@ void MyApi::th_decode_worker() {
     while (is_decode_worker_running) {
         // 本来は buffers[0] にデータが届くのを条件変数等で待つ
         
-        // 検証用に、実際に渡す値をメンバ変数に記録
-        this->passed_address = buffers[0];
-        this->passed_size = 2 * 1024;
-        this->is_dec_simple_called = true; // 呼び出し完了フラグ
+        dec_simple(buffers[0], 2 * 1024);
 
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+}
+
+void MyApi::dec_simple(uint8_t* data, size_t size) {
+    // 検証用に、実際に渡す値をメンバ変数に記録
+    this->passed_address = data;
+    this->passed_size = size;
+    this->is_dec_simple_called = true; // 呼び出し完了フラグ
 }

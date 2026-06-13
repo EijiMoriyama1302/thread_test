@@ -55,6 +55,7 @@ public:
 private:
     void th_demux() ;
     void th_decode_worker() ;
+    void dec_simple(uint8_t* data, size_t size) ;
 
     std::thread demux_thread;
     std::thread decode_thread;
