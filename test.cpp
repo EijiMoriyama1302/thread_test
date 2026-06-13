@@ -298,3 +298,71 @@ TEST_F(MyApiBufferClearTest, ThDecodeWorkerClearsBuffer0AfterProcessing) {
     
     EXPECT_EQ(result, 0) << "buffers[0] was not correctly cleared to 0 after processing.";
 }
+
+class MyApiAllBuffersWriteTest : public ::testing::Test {
+protected:
+    const std::string test_filename = "test.mpg";
+    const size_t ONE_BUFFER_SIZE = 2 * 1024 * 1024; // 2MB
+    const size_t TOTAL_SIZE = ONE_BUFFER_SIZE * MyApi::BUFFER_COUNT; // 16MB
+    std::vector<uint8_t> dummy_file_data;
+
+    // テストケース実行前に、16MBのテスト用ダミーファイルを生成する
+    void SetUp() override {
+        dummy_file_data.resize(TOTAL_SIZE);
+        // 検証しやすいように、一意のパターン（インデックスに応じた値）で埋める
+        for (size_t i = 0; i < TOTAL_SIZE; ++i) {
+            dummy_file_data[i] = static_cast<uint8_t>(i % 256);
+        }
+
+        std::ofstream ofs(test_filename, std::ios::binary);
+        ASSERT_TRUE(ofs.is_open()) << "Failed to create temporary 16MB test file.";
+        ofs.write(reinterpret_cast<const char*>(dummy_file_data.data()), TOTAL_SIZE);
+        ofs.close();
+    }
+
+    // テスト終了後に一時ファイルを削除する
+    void TearDown() override {
+        std::remove(test_filename.c_str());
+    }
+};
+
+TEST_F(MyApiAllBuffersWriteTest, ThDemuxWritesFileDataToAllBuffersSequentially) {
+    MyApi api;
+
+    // 1. 初期化とスレッド起動（内部でファイルの読み込みが非同期に開始される）
+    api.mp_api_init();
+
+    // 2. 確実に全バッファへの書き込み変化を追うため、shared_memory_pool があれば 
+    //    事前に 0xFF 等で初期化されているか、またはプロダクションコード側の処理完了フラグを待ちます。
+    //    ここでは、最後のバッファ (buffers[7]) の末尾が期待される値に変わるかをタイムアウト付きで監視します。
+    const int max_attempts = 100;
+    bool all_buffers_ready = false;
+    uint8_t expected_last_byte = dummy_file_data[TOTAL_SIZE - 1];
+
+    for (int i = 0; i < max_attempts; ++i) {
+        // 全バッファのポインタが有効かつ、最後のバッファの最後の1バイトが書き換わったかチェック
+        if (api.buffers[MyApi::BUFFER_COUNT - 1] != nullptr && 
+            api.buffers[MyApi::BUFFER_COUNT - 1][ONE_BUFFER_SIZE - 1] == expected_last_byte) {
+            all_buffers_ready = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(15));
+    }
+
+    // 3. アサーション：タイムアウトまでに全データが書き込まれたか確認
+    ASSERT_TRUE(all_buffers_ready) << "th_demux failed to write all 8 buffers within the timeout period.";
+
+    // 4. 検証：buffers[0] から buffers[7] までのデータ整合性をループで検証
+    for (size_t b = 0; b < MyApi::BUFFER_COUNT; ++b) {
+        // ポインタが nullptr でないことを保証
+        ASSERT_NE(api.buffers[b], nullptr) << "buffers[" << b << "] is nullptr.";
+
+        // 元の 16MB データから、各バッファに対応する 2MB 分のオフセット位置を計算
+        const uint8_t* expected_buffer_start = dummy_file_data.data() + (b * ONE_BUFFER_SIZE);
+
+        // メモリ内容を比較
+        int result = std::memcmp(api.buffers[b], expected_buffer_start, ONE_BUFFER_SIZE);
+        
+        EXPECT_EQ(result, 0) << "Data mismatch detected in buffers[" << b << "]!";
+    }
+}
