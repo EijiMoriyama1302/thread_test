@@ -33,8 +33,12 @@ void MyApi::th_demux() {
     // 実際のコードでは、ここで "test.mpg" を開き、2MB分を buffers[0] に読み込む
     FILE* fp = fopen("test.mpg", "rb");
     if (fp) {
-        // buffers[0] に最大 2MB 読み込む
-        fread(buffers[0], 1, BUFFER_SIZE, fp);
+        // 全8個のバッファに対して順番に2MBずつデータを読み込む
+        for (size_t i = 0; i < BUFFER_COUNT; ++i) {
+            if (buffers[i] != nullptr) {
+                fread(buffers[i], 1, BUFFER_SIZE, fp); // BUFFER_SIZEは2MB
+            }
+        }
         fclose(fp);
     }
 
@@ -52,6 +56,8 @@ void MyApi::th_demux() {
 
 void MyApi::th_decode_worker() {
     // ここでのフラグセットは削除（親スレッド側でセット済み）
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
     while (is_decode_worker_running) {
         // 本来は buffers[0] にデータが届くのを条件変数等で待つ
