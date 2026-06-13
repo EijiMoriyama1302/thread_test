@@ -32,15 +32,30 @@ void MyApi::th_demux() {
     // 【ファイル読み込み・書き込み処理のイメージ】
     // 実際のコードでは、ここで "test.mpg" を開き、2MB分を buffers[0] に読み込む
     FILE* fp = fopen("test.mpg", "rb");
-    if (fp) {
-        // 全8個のバッファに対して順番に2MBずつデータを読み込む
-        for (size_t i = 0; i < BUFFER_COUNT; ++i) {
-            if (buffers[i] != nullptr) {
-                fread(buffers[i], 1, BUFFER_SIZE, fp); // BUFFER_SIZEは2MB
-            }
+    if (!fp) return;
+
+    size_t buffer_index = 0;
+    
+    while (is_running) {
+        // 現在注目しているバッファの先頭ポインタ
+        uint8_t* current_buf = buffers[buffer_index % BUFFER_COUNT];
+
+        // 【重要】もしバッファがまだ消費されていなければ（テスト開始直後は buffers[0]〜[7] が順に埋まる）
+        // ここで fread を実行する。
+        // ※ 2周目の buffers[0] に来換えたときは、テスト側が 0 にクリアしてくれるまでここで少し待つか、
+        // もしくは条件をスキップしてループを回します。
+        
+        // 簡易的に「先頭が0（空き）か、まだ1回も書き込んでいない」なら読み込むロジックの例：
+        if (current_buf[0] == 0 || buffer_index < BUFFER_COUNT) {
+            size_t read_bytes = fread(current_buf, 1, BUFFER_SIZE, fp);
+            if (read_bytes == 0) break; // ファイル終端なら終了
+
+            buffer_index++; // 次のバッファインデックスへ
         }
-        fclose(fp);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
+    fclose(fp);
 
     // スレッドのメインループ処理...
     while (is_running) {
