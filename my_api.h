@@ -16,6 +16,7 @@ public:
 
     // テストから状態を確認するためのヘルパー（または共通のフラグ）
     bool is_demux_running() const { return is_running; }
+    bool is_decode_running() {return false;}
 
 private:
     void th_demux() ;
