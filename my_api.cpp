@@ -1,5 +1,6 @@
 #include "my_api.h"
 #include <cstdio>
+#include <cstring>
 
 void MyApi::mp_api_init() {
     // 1. 2MB × 8個 = 16MB のメモリを動的に一括確保
@@ -52,9 +53,16 @@ void MyApi::th_demux() {
 void MyApi::th_decode_worker() {
     // ここでのフラグセットは削除（親スレッド側でセット済み）
 
-    // スレッドのメインループ処理...
+    size_t slot_index = 0;
+
     while (is_decode_worker_running) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        // 本来のデコード処理
+        // 本来は buffers[0] にデータが届くのを条件変数等で待つ
+        if (slot_index < 100) {
+            // buffers[0] から 2KB 単位でデータをスロットへデコード/コピー
+            std::memcpy(decode_slots[slot_index], buffers[0], 2 * 1024);
+            slot_index++;
+        }
+    
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }

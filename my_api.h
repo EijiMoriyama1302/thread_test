@@ -38,6 +38,9 @@ public:
     // バッファの実際の先頭ポインタを保持する配列
     uint8_t* buffers[BUFFER_COUNT] = {nullptr};
 
+    // 2KB × 100個 の出力バッファスロットの例
+    uint8_t decode_slots[100][2 * 1024] = {{0}};
+
     void mp_api_init();
 
     // テストから状態を確認するためのヘルパー（または共通のフラグ）

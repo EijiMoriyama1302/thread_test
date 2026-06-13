@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <thread>
 #include <cstring>
+#include <vector>
 #include <fstream>
 #include "my_api.h"
 
@@ -167,4 +168,65 @@ TEST_F(MyApiFileWriteTest, ThDemuxWritesFileDataToBuffer0) {
     int result = std::memcmp(api.buffers[0], dummy_data.data(), FILE_SIZE);
     
     EXPECT_EQ(result, 0) << "Data in buffers[0] does not match the source file 'test.mpg'.";
+}
+
+// テスト用のフィクスチャクラス
+class MyApiDecodeWorkerTest : public ::testing::Test {
+protected:
+    const size_t SLOT_SIZE = 2 * 1024;       // 2KB
+    const size_t SLOT_COUNT = 100;           // 100個
+    const size_t TOTAL_DECODE_SIZE = 8 * 1024 * 1024; // 8MB (※2KB×100個を何周か、あるいは大きなプールを指す場合)
+
+    void SetUp() override {
+        // テスト毎の共通初期化処理（必要に応じて）
+    }
+
+    void TearDown() override {
+        // テスト毎の共通クリーンアップ処理
+    }
+};
+TEST_F(MyApiDecodeWorkerTest, ThDecodeWorkerProcessesDataToSlots) {
+    MyApi api;
+
+    // 1. メモリプールとスレッドの初期化
+    api.mp_api_init();
+
+    // 2. 入力バッファ (buffers[0]) に検証用データを仕込む
+    //    (shared_memory_pool の先頭から 2MB 分が buffers[0] に割り当てられている前提)
+    ASSERT_NE(api.buffers[0], nullptr);
+    
+    // 識別しやすいように 0x55 で入力バッファの先頭領域を埋める
+    std::memset(api.buffers[0], 0x55, SLOT_SIZE); 
+
+    // 3. 【前提】プロダクションコード側に、100個のスロット配列（例: api.decode_slots[100][2048]）
+    //    またはそれに準ずるバッファが用意されており、初期状態は 0 埋めされていると仮定します。
+    //    ここでは、テストからアクセス可能な状態として検証します。
+
+    // 4. デコーダースレッドが処理を完了するのをタイムアウト付きループで待つ
+    //    (2KB × 100個 = 200KB 分のデータがスロットに書き込まれるのを待機)
+    const int max_attempts = 100;
+    bool decode_completed = false;
+
+    for (int i = 0; i < max_attempts; ++i) {
+        // 例として、最後（100番目）のスロットの先頭バイトが 0x55 に変化したかで判定
+        // ※ プロダクションコードに「処理済みスロット数」を返すカウンタ（api.get_processed_slots()等）が
+        //    あれば、`if (api.get_processed_slots() >= 100)` と書くのがより堅牢で推奨されます。
+        if (api.decode_slots[SLOT_COUNT - 1][0] == 0x55) {
+            decode_completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // 5. アサーション：タイムアウトまでに処理が完了したか
+    ASSERT_TRUE(decode_completed) << "th_decode_worker failed to process 100 slots within the timeout period.";
+
+    // 6. データの完全性検証：100個の全スロットの内容が正しく書き込まれているか
+    for (size_t i = 0; i < SLOT_COUNT; ++i) {
+        // 各スロットの先頭バイトが期待通りのデータ (0x55) になっているか
+        EXPECT_EQ(api.decode_slots[i][0], 0x55) << "Slot [" << i << "] data is incorrect!";
+        
+        // 必要に応じて、スロット全体のデータの一致を memcmp 等で検証します
+        // EXPECT_EQ(std::memcmp(api.decode_slots[i], expected_data, SLOT_SIZE), 0);
+    }
 }
