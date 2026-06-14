@@ -573,3 +573,67 @@ TEST_F(MyApiSequentialDecodeTest, ThDecodeWorkerProcessesAndClearsBuffersSequent
         EXPECT_EQ(result, 0) << "buffers[" << b << "] was not correctly cleared to 0 after sequential processing.";
     }
 }
+
+class MyApiDataDetectionTest : public ::testing::Test {
+protected:
+    void SetUp() override {}
+    void TearDown() override {}
+};
+
+TEST_F(MyApiDataDetectionTest, ThDecodeWorkerClearsAllThenDetectsAndProcessesNewDataInBuffer0) {
+    MyApi api;
+
+    // 準備: スレッドが動く前に、あらかじめ全バッファを 0x55 で満たしておく
+    // (これらが自動的に 0 クリアされることを確認するため)
+    api.shared_memory_pool.resize(MyApi::BUFFER_SIZE * MyApi::BUFFER_COUNT);
+    for (size_t b = 0; b < MyApi::BUFFER_COUNT; ++b) {
+        api.buffers[b] = &api.shared_memory_pool[b * MyApi::BUFFER_SIZE];
+        std::memset(api.buffers[b], 0x55, MyApi::BUFFER_SIZE);
+    }
+
+    // 1. スレッドを起動（mp_api_init 内でフラグを立てて thread を走らせる）
+    api.mp_api_init();
+
+    const int max_attempts = 100;
+
+    // -------------------------------------------------------------------------
+    // 検証ステップ1: 起動直後に全バッファ（buffers[0]~[7]）が0クリアされるのを待つ
+    // -------------------------------------------------------------------------
+    bool init_clear_done = false;
+    for (int i = 0; i < max_attempts; ++i) {
+        if (api.is_init_clear_completed) {
+            init_clear_done = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(init_clear_done) << "Initial all-buffer clear timed out.";
+
+    // 実際に buffers[0] ～ buffers[7] がすべて 0 になっているか厳密にチェック
+    std::vector<uint8_t> expected_zero_buffer(MyApi::BUFFER_SIZE, 0);
+    for (size_t b = 0; b < MyApi::BUFFER_COUNT; ++b) {
+        EXPECT_EQ(std::memcmp(api.buffers[b], expected_zero_buffer.data(), MyApi::BUFFER_SIZE), 0)
+            << "buffers[" << b << "] was not cleared on startup.";
+    }
+
+    // -------------------------------------------------------------------------
+    // 検証ステップ2: テスト側から buffers[0] に新データを書き込み、検出・処理させる
+    // -------------------------------------------------------------------------
+    // buffers[0] の全域を新データ 0xAA で埋める（データがセットされた状態を作る）
+    std::memset(api.buffers[0], 0xAA, MyApi::BUFFER_SIZE);
+
+    // th_decode_worker が「0以外になった！」と検出して、2KBずつ読み出し、再度0クリアするのを待つ
+    bool second_decode_done = false;
+    for (int i = 0; i < max_attempts; ++i) {
+        if (api.is_second_decode_completed) {
+            second_decode_done = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(second_decode_done) << "th_decode_worker failed to detect or process new data in buffers[0].";
+
+    // 最終検証: 2回目の処理が終わり、buffers[0] が再び「すべて 0」に戻っているか確認
+    EXPECT_EQ(std::memcmp(api.buffers[0], expected_zero_buffer.data(), MyApi::BUFFER_SIZE), 0)
+        << "buffers[0] was not cleared to 0 after the second decode process.";
+}

@@ -52,6 +52,8 @@ public:
     uint8_t* last_processed_address = nullptr; // 最後に処理したアドレス
     std::atomic<bool> is_clear_completed{false}; // ゼロクリアまで全処理が完了したフラグ
     std::atomic<size_t> completed_buffer_count{0}; // ゼロクリアまで完了したバッファの個数 (0～8)
+    std::atomic<bool> is_init_clear_completed{false}; // 最初の全バッファ0クリアが完了したフラグ
+    std::atomic<bool> is_second_decode_completed{false}; // データ検出後の2回目のデコードとクリアが完了したフラグ
 
 private:
     void th_demux() ;
