@@ -437,3 +437,139 @@ TEST_F(MyApiRingBufferWriteTest, ThDemuxOverwritesBuffer0WithNextDataAfterClear)
 
     EXPECT_EQ(result, 0) << "The overwritten data in buffers[0] is corrupted or incorrect.";
 }
+
+class MyApiContinuousRingBufferTest : public ::testing::Test {
+protected:
+    const std::string test_filename = "test.mpg";
+    const size_t BLOCK_SIZE = 2 * 1024 * 1024; // 2MB
+    // 8個分(16MB) + 続きの2個分(4MB) = 計20MB
+    const size_t TOTAL_SIZE = BLOCK_SIZE * (MyApi::BUFFER_COUNT + 2); 
+    std::vector<uint8_t> dummy_file_data;
+
+    void SetUp() override {
+        dummy_file_data.resize(TOTAL_SIZE);
+        // ブロックごとに異なる値で埋める (ブロック0: 0x01, ブロック1: 0x02, ..., ブロック9: 0x0A)
+        for (size_t b = 0; b < MyApi::BUFFER_COUNT + 2; ++b) {
+            std::memset(dummy_file_data.data() + (b * BLOCK_SIZE), static_cast<int>(b + 1), BLOCK_SIZE);
+        }
+
+        std::ofstream ofs(test_filename, std::ios::binary);
+        ASSERT_TRUE(ofs.is_open());
+        ofs.write(reinterpret_cast<const char*>(dummy_file_data.data()), TOTAL_SIZE);
+        ofs.close();
+    }
+
+    void TearDown() override {
+        std::remove(test_filename.c_str());
+    }
+};
+
+TEST_F(MyApiContinuousRingBufferTest, ThDemuxOverwritesBuffersSequentiallyAfterClear) {
+    MyApi api;
+
+    // 1. 初期化とスレッド起動（まずはファイルから16MB分が全バッファに順次書き込まれる）
+    api.mp_api_init();
+
+    const int max_attempts = 100;
+
+    // -------------------------------------------------------------------------
+    // ステップ1: 1周目（buffers[0]〜[7]）の書き込み完了を待つ
+    // -------------------------------------------------------------------------
+    bool first_round_completed = false;
+    for (int i = 0; i < max_attempts; ++i) {
+        if (api.buffers[MyApi::BUFFER_COUNT - 1] != nullptr && 
+            api.buffers[MyApi::BUFFER_COUNT - 1][0] == 0x08) {
+            first_round_completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(first_round_completed) << "First round of writing to buffers[0~7] timed out.";
+    
+    // この時点で buffers[0] は 0x01, buffers[1] は 0x02 であることを確認
+    EXPECT_EQ(api.buffers[0][0], 0x01);
+    EXPECT_EQ(api.buffers[1][0], 0x02);
+
+    // -------------------------------------------------------------------------
+    // ステップ2: buffers[0] を0クリアし、9個目のデータ（0x09）が書き込まれるのを待つ
+    // -------------------------------------------------------------------------
+    std::memset(api.buffers[0], 0, BLOCK_SIZE);
+
+    bool buffer0_overwrite_completed = false;
+    for (int i = 0; i < max_attempts; ++i) {
+        if (api.buffers[0][0] == 0x09) {
+            buffer0_overwrite_completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(buffer0_overwrite_completed) << "th_demux did not overwrite buffers[0] with 9th block.";
+
+    // buffers[0] の全域検証
+    const uint8_t* expected_9th_data = dummy_file_data.data() + (MyApi::BUFFER_COUNT * BLOCK_SIZE);
+    EXPECT_EQ(std::memcmp(api.buffers[0], expected_9th_data, BLOCK_SIZE), 0);
+
+    // -------------------------------------------------------------------------
+    // ステップ3: buffers[1] を0クリアし、10個目のデータ（0x0A）が書き込まれるのを待つ
+    // -------------------------------------------------------------------------
+    std::memset(api.buffers[1], 0, BLOCK_SIZE);
+
+    bool buffer1_overwrite_completed = false;
+    for (int i = 0; i < max_attempts; ++i) {
+        if (api.buffers[1][0] == 0x0A) {
+            buffer1_overwrite_completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(buffer1_overwrite_completed) << "th_demux did not overwrite buffers[1] with 10th block.";
+
+    // buffers[1] の全域検証
+    const uint8_t* expected_10th_data = dummy_file_data.data() + ((MyApi::BUFFER_COUNT + 1) * BLOCK_SIZE);
+    EXPECT_EQ(std::memcmp(api.buffers[1], expected_10th_data, BLOCK_SIZE), 0);
+}
+
+class MyApiSequentialDecodeTest : public ::testing::Test {
+protected:
+    void SetUp() override {}
+    void TearDown() override {}
+};
+
+TEST_F(MyApiSequentialDecodeTest, ThDecodeWorkerProcessesAndClearsBuffersSequentially) {
+    MyApi api;
+
+    // 1. メモリプールとスレッドの初期化
+    api.mp_api_init();
+
+    // 2. 変化を確実に検知するため、すべてのバッファ (buffers[0]~[7]) を事前に 0x55 で埋める
+    for (size_t b = 0; b < MyApi::BUFFER_COUNT; ++b) {
+        ASSERT_NE(api.buffers[b], nullptr) << "buffers[" << b << "] is nullptr at initialization.";
+        std::memset(api.buffers[b], 0x55, MyApi::BUFFER_SIZE);
+    }
+
+    // 3. 非同期で th_decode_worker が全8個のバッファの処理とゼロクリアを終えるのを待つ
+    const int max_attempts = 150;
+    bool all_processing_completed = false;
+
+    for (int i = 0; i < max_attempts; ++i) {
+        // カウンターが 8 (BUFFER_COUNT) に達したら全バッファの処理が完了
+        if (api.completed_buffer_count == MyApi::BUFFER_COUNT) {
+            all_processing_completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // 4. 検証：タイムアウトせずに buffers[7] のクリア処理まで到達したか
+    ASSERT_TRUE(all_processing_completed) 
+        << "th_decode_worker sequential processing timed out. Completed count: " << api.completed_buffer_count;
+
+    // 5. 検証：buffers[0] から buffers[7] までのすべての領域が「すべて 0」になっているか
+    std::vector<uint8_t> expected_zero_buffer(MyApi::BUFFER_SIZE, 0);
+
+    for (size_t b = 0; b < MyApi::BUFFER_COUNT; ++b) {
+        int result = std::memcmp(api.buffers[b], expected_zero_buffer.data(), MyApi::BUFFER_SIZE);
+        
+        EXPECT_EQ(result, 0) << "buffers[" << b << "] was not correctly cleared to 0 after sequential processing.";
+    }
+}

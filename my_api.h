@@ -51,6 +51,7 @@ public:
     std::atomic<size_t> decode_loop_count{0}; // 2KBずつの処理が何回走ったか
     uint8_t* last_processed_address = nullptr; // 最後に処理したアドレス
     std::atomic<bool> is_clear_completed{false}; // ゼロクリアまで全処理が完了したフラグ
+    std::atomic<size_t> completed_buffer_count{0}; // ゼロクリアまで完了したバッファの個数 (0～8)
 
 private:
     void th_demux() ;
