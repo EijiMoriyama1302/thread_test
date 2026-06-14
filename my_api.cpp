@@ -25,6 +25,16 @@ void MyApi::th_demux() {
         return;
     }
 
+    // -------------------------------------------------------------------------
+    // フェーズ1: 起動直後に buffers[0] ～ buffers[7] (各2MB) を一斉に0クリアする
+    // -------------------------------------------------------------------------
+    for (size_t b = 0; b < BUFFER_COUNT; ++b) {
+        if (buffers[b]) {
+            std::memset(buffers[b], 0, BUFFER_SIZE);
+        }
+    }
+    is_init_clear_completed = true; // 最初の全クリア完了をテスト側に通知
+
     // ★重要: decode_workerを起動する「前」に、フラグを true にする
     is_decode_worker_running = true;
     decode_thread = std::thread(&MyApi::th_decode_worker, this);
@@ -95,6 +105,8 @@ void MyApi::th_decode_worker() {
             // 2. 2MBの処理が終わったら、そのバッファを0クリアする
             std::memset(start_ptr, 0, ONE_BUFFER_SIZE);
 
+            is_second_decode_completed = true; // テスト側に完了を伝える
+            
             // 3. テスト側に完了を伝える
             is_clear_completed = true;
 
