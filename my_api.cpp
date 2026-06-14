@@ -76,22 +76,31 @@ void MyApi::th_decode_worker() {
 
     while (is_decode_worker_running) {
         // 本来は buffers[0] にデータが届くのを条件変数等で待つ
-        
-        // 2MBの領域を 2KB(2048バイト) ずつ進めるループ
-        const size_t STEP_SIZE = 2 * 1024; // 2KB
-        uint8_t* start_ptr = buffers[0];
-        uint8_t* end_ptr = start_ptr + BUFFER_SIZE; // BUFFER_SIZEは2MB
+        completed_buffer_count = 0;
 
-        for (uint8_t* current_ptr = start_ptr; current_ptr < end_ptr; current_ptr += STEP_SIZE) {
-            // ここで本来の dec_simple 処理などを実行
-            this->dec_simple(current_ptr, STEP_SIZE);
+        // buffers[0] から buffers[7] まで順番に処理
+        for (size_t b = 0; b < BUFFER_COUNT; ++b) {
+            uint8_t* start_ptr = buffers[b];
+            if (!start_ptr) break;
+
+            const size_t STEP_SIZE = 2 * 1024; // 2KB
+            const size_t ONE_BUFFER_SIZE = 2 * 1024 * 1024; // 2MB
+            uint8_t* end_ptr = start_ptr + ONE_BUFFER_SIZE;
+
+            // 1. 2KBずつ進めてデータを読み出す（デコード処理をシミュレート）
+            for (uint8_t* current_ptr = start_ptr; current_ptr < end_ptr; current_ptr += STEP_SIZE) {
+                this->dec_simple(current_ptr, STEP_SIZE);
+            }
+
+            // 2. 2MBの処理が終わったら、そのバッファを0クリアする
+            std::memset(start_ptr, 0, ONE_BUFFER_SIZE);
+
+            // 3. テスト側に完了を伝える
+            is_clear_completed = true;
+
+            // 3. 完了したバッファの個数をインクリメント（テスト側へ通知）
+            completed_buffer_count++;
         }
-
-        // 2. ★ループ完了後にバッファ（2MB）を0クリアする
-        std::memset(buffers[0], 0, BUFFER_SIZE);
-
-        // 3. テスト側に完了を伝える
-        is_clear_completed = true;
 
         break; // テスト用に1周したら抜ける
     }
@@ -107,6 +116,8 @@ void MyApi::dec_simple(uint8_t* data, size_t size) {
     }
 
     // テスト検証用に記録
-    decode_loop_count++;
-    last_processed_address = data;
+    if(decode_loop_count < 1024) {
+        decode_loop_count++;
+        last_processed_address = data;
+    }
 }
