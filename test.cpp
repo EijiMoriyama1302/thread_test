@@ -637,3 +637,72 @@ TEST_F(MyApiDataDetectionTest, ThDecodeWorkerClearsAllThenDetectsAndProcessesNew
     EXPECT_EQ(std::memcmp(api.buffers[0], expected_zero_buffer.data(), MyApi::BUFFER_SIZE), 0)
         << "buffers[0] was not cleared to 0 after the second decode process.";
 }
+
+// -------------------------------------------------------------------------
+// メモリカウンタの準備 (new / delete のオーバーライド)
+// -------------------------------------------------------------------------
+std::atomic<int64_t> global_allocated_bytes{0};
+
+void* operator new(size_t size) {
+    global_allocated_bytes += size;
+    return std::malloc(size);
+}
+
+void operator delete(void* ptr, size_t size) noexcept {
+    global_allocated_bytes -= size;
+    std::free(ptr);
+}
+
+void operator delete(void* ptr) noexcept {
+    // サイズ不明のdeleteはカウントを正確に引けないため、
+    // vectorの解放（サイズ付きdeleteが呼ばれる）をメインに追跡します
+    std::free(ptr);
+}
+
+// -------------------------------------------------------------------------
+// テストクラス
+// -------------------------------------------------------------------------
+class MyApiMemoryReleaseTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        // テスト開始時のカウンタを記憶
+        baseline_bytes = global_allocated_bytes.load();
+    }
+    void TearDown() override {}
+
+    int64_t baseline_bytes = 0;
+};
+
+TEST_F(MyApiMemoryReleaseTest, MemoryIsCompletelyReleasedAfterThreadAndObjectDestruction) {
+    // 計算上の期待される確保サイズ: 2MB * 8 = 16MB (16,777,216 バイト)
+    const int64_t EXPECTED_POOL_SIZE = MyApi::BUFFER_SIZE * MyApi::BUFFER_COUNT;
+
+    {
+        // 1. スコープ内で MyApi オブジェクトを生み出す
+        MyApi api;
+
+        // 2. メモリ確保とスレッド起動
+        api.mp_api_init();
+
+        // 初期化によって、カウンタが 16MB 以上増えていることを確認
+        int64_t current_allocated = global_allocated_bytes.load() - baseline_bytes;
+        EXPECT_GE(current_allocated, EXPECTED_POOL_SIZE) 
+            << "Memory pool was not allocated correctly in mp_api_init().";
+        
+        // (必要に応じて) スレッドが少し動くのを待つ
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+        int64_t leaked_bytes = global_allocated_bytes.load() - baseline_bytes;
+        EXPECT_NE(leaked_bytes, 0) 
+            << "No memory leak detected! " << leaked_bytes << " bytes were not released.";
+
+    } // ◄★★ ここで `api` のスコープが終了！
+      // デストラクタが走り、th_demuxが終了(join)し、shared_memory_poolが解放されます。
+
+    // 3. 【最終検証】オブジェクト消滅後のメモリ残量が、開始前（ベースライン）に戻っているかチェック
+    int64_t leaked_bytes = global_allocated_bytes.load() - baseline_bytes;
+
+    // 完全に 0 になるか、あるいはstd::threadの内部管理用メモリの極小の微増のみを許容
+    EXPECT_LE(leaked_bytes, 0) 
+        << "Memory leak detected! " << leaked_bytes << " bytes were not released.";
+}
